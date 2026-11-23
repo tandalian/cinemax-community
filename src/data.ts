@@ -7,6 +7,7 @@ export type Movie = {
   duration: string
   poster: string
   backdrop: string
+  video_url?: string
   rating: number
   downloads: number
   featured?: boolean
@@ -20,8 +21,8 @@ export const demoMovies: Movie[] = [
     genre: 'Sci-Fi',
     year: 2026,
     duration: '2h 08m',
-    poster: 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=700&q=85',
-    backdrop: 'https://images.unsplash.com/photo-1519608487953-e999c86e7455?auto=format&fit=crop&w=1600&q=90',
+    poster: 'https://unsplash.com',
+    backdrop: 'https://unsplash.com',
     rating: 8.7,
     downloads: 1842,
     featured: true,
@@ -33,8 +34,8 @@ export const demoMovies: Movie[] = [
     genre: 'Drama',
     year: 2025,
     duration: '1h 54m',
-    poster: 'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&w=700&q=85',
-    backdrop: 'https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?auto=format&fit=crop&w=1600&q=90',
+    poster: 'https://unsplash.com',
+    backdrop: 'https://unsplash.com',
     rating: 8.2,
     downloads: 1231,
   },
@@ -45,8 +46,8 @@ export const demoMovies: Movie[] = [
     genre: 'Thriller',
     year: 2026,
     duration: '2h 16m',
-    poster: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=700&q=85',
-    backdrop: 'https://images.unsplash.com/photo-1517976547714-720226b864c1?auto=format&fit=crop&w=1600&q=90',
+    poster: 'https://unsplash.com',
+    backdrop: 'https://unsplash.com',
     rating: 7.9,
     downloads: 988,
   },
@@ -57,8 +58,8 @@ export const demoMovies: Movie[] = [
     genre: 'Adventure',
     year: 2024,
     duration: '1h 48m',
-    poster: 'https://images.unsplash.com/photo-1500534623283-312aade485b7?auto=format&fit=crop&w=700&q=85',
-    backdrop: 'https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?auto=format&fit=crop&w=1600&q=90',
+    poster: 'https://unsplash.com',
+    backdrop: 'https://unsplash.com',
     rating: 8.4,
     downloads: 1567,
   },
@@ -69,8 +70,8 @@ export const demoMovies: Movie[] = [
     genre: 'Action',
     year: 2025,
     duration: '2h 02m',
-    poster: 'https://images.unsplash.com/photo-1519608487953-e999c86e7455?auto=format&fit=crop&w=700&q=85',
-    backdrop: 'https://images.unsplash.com/photo-1519608487953-e999c86e7455?auto=format&fit=crop&w=1600&q=90',
+    poster: 'https://unsplash.com',
+    backdrop: 'https://unsplash.com',
     rating: 8.0,
     downloads: 1104,
   },
