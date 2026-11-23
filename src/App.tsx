@@ -194,7 +194,7 @@ function AppShell({ user, setUser, movies, onRefreshMovies }: { user: SessionUse
   const navigate = useNavigate()
   const initials = user.name.split(' ').map(part => part.charAt(0)).join('').slice(0, 2)
 
-  async function logout() {
+  async function logout() 
     if (supabase) await supabase.auth.signOut()
     setUser(null)
     navigate('/')
