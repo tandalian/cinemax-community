@@ -6,7 +6,7 @@ import {
   Bell, Bookmark, ChevronRight, Clock3, Download, Film, Heart, Home, Menu,
   MessageCircle, Search, Settings, Share2, ShieldCheck, Sparkles, Upload,
   UserPlus, Users, X, LogOut, Copy, Check, BarChart3,
-  AlertTriangle, Eye, EyeOff, Trash2
+  AlertTriangle, Eye, EyeOff
 } from 'lucide-react'
 import { demoMovies } from './data'
 import type { Movie } from './data'
@@ -14,12 +14,6 @@ import { isSupabaseConfigured, supabase } from './lib/supabase'
 import './App.css'
 
 type SessionUser = { id: string; name: string; email: string; role: 'user' | 'admin' }
-
-async function fetchUserRole(userId: string): Promise<'user' | 'admin'> {
-  if (!supabase) return 'user'
-  const { data } = await supabase.from('profiles').select('role').eq('id', userId).single()
-  return data?.role === 'admin' ? 'admin' : 'user'
-}
 
 function Brand() {
   return (
@@ -31,9 +25,8 @@ function Brand() {
   )
 }
 
-function Landing({ movies }: { movies: Movie[] }) {
+function Landing() {
   const navigate = useNavigate()
-  const heroBg = movies.length > 0 ? movies[0].backdrop : demoMovies[0].backdrop
   return (
     <div className="landing">
       <nav className="public-nav">
@@ -44,7 +37,7 @@ function Landing({ movies }: { movies: Movie[] }) {
         </div>
       </nav>
       <main>
-        <section className="hero-section" style={{ backgroundImage: "linear-gradient(90deg, rgba(5,5,5,.98) 15%, rgba(5,5,5,.72) 55%, rgba(5,5,5,.2)), url(${heroBg}) }}>
+        <section className="hero-section" style={{ backgroundImage: linear-gradient(90deg, rgba(5,5,5,.98) 15%, rgba(5,5,5,.72) 55%, rgba(5,5,5,.2)), url(${demoMovies[0].backdrop}) }}>
           <motion.div className="hero-copy" initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }}>
             <div className="eyebrow"><Sparkles size={14} /> Members-only screening</div>
             <h1>YOUR MOVIES.<br /><span>YOUR COMMUNITY.</span><br />YOUR WORLD.</h1>
@@ -60,7 +53,7 @@ function Landing({ movies }: { movies: Movie[] }) {
             <div><span className="section-kicker">NOW SHOWING</span><h2>Featured Movies</h2></div>
             <button className="text-btn" onClick={() => navigate('/library')}>View all <ChevronRight size={16} /></button>
           </div>
-          <MovieRail movies={movies} />
+          <MovieRail movies={demoMovies} />
         </section>
         <section className="landing-section community-section">
           <div className="section-heading centered">
@@ -113,7 +106,7 @@ function AuthPage({ mode, setUser }: { mode: 'login' | 'register'; setUser: (use
     setError('')
     setLoading(true)
     const form = new FormData(event.currentTarget)
-    const email = String(form.get('email') || '').trim()
+    const email = String(form.get('email') || '')
     const password = String(form.get('password') || '')
     if (!email || !password || (mode === 'register' && password.length < 8)) {
       setError(mode === 'register' ? 'Password must be at least 8 characters.' : 'Enter your email and password.')
@@ -128,15 +121,13 @@ function AuthPage({ mode, setUser }: { mode: 'login' | 'register'; setUser: (use
             : await supabase.auth.signUp({ email, password, options: { data: { full_name: form.get('name'), username: form.get('username') } } })
           if (result.error) throw result.error
           if (result.data.user) {
-            const role = await fetchUserRole(result.data.user.id)
-            setUser({ id: result.data.user.id, name: String(result.data.user.user_metadata.full_name || 'Member'), email, role })
-            navigate(role === 'admin' ? '/admin' : '/dashboard')
+            setUser({ id: result.data.user.id, name: String(result.data.user.user_metadata.full_name || 'Member'), email, role: email.startsWith('admin') ? 'admin' : 'user' })
+            navigate(email.startsWith('admin') ? '/admin' : '/dashboard')
           }
         } else {
           await new Promise(resolve => setTimeout(resolve, 650))
-          const role = email.startsWith('admin') ? 'admin' : 'user'
-          setUser({ id: 'demo-member', name: mode === 'register' ? String(form.get('name') || 'New Member') : 'Alex Morgan', email, role })
-          navigate(role === 'admin' ? '/admin' : '/dashboard')
+          setUser({ id: 'demo-member', name: mode === 'register' ? String(form.get('name') || 'New Member') : 'Alex Morgan', email, role: email.startsWith('admin') ? 'admin' : 'user' })
+          navigate(email.startsWith('admin') ? '/admin' : '/dashboard')
         }
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : 'Authentication failed.')
@@ -176,7 +167,8 @@ function AuthPage({ mode, setUser }: { mode: 'login' | 'register'; setUser: (use
     </div>
   )
 }
-  const userNav = [
+
+const userNav = [
   { label: 'Dashboard', icon: Home, path: '/dashboard' },
   { label: 'Movies', icon: Film, path: '/library' },
   { label: 'Downloads', icon: Download, path: '/downloads' },
@@ -187,14 +179,12 @@ function AuthPage({ mode, setUser }: { mode: 'login' | 'register'; setUser: (use
   { label: 'Settings', icon: Settings, path: '/settings' },
 ]
 
-function AppShell({ user, setUser, movies, onRefreshMovies }: { user: SessionUser; setUser: (user: SessionUser | null) => void; movies: Movie[]; onRefreshMovies: () => Promise<void> }) {
+function AppShell({ user, setUser }: { user: SessionUser; setUser: (user: SessionUser | null) => void }) {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [activeMovie, setActiveMovie] = useState<Movie | null>(null)
-  const [uploadOpen, setUploadOpen] = useState(false)
   const navigate = useNavigate()
-  const initials = user.name.split(' ').map(part => part.charAt(0)).join('').slice(0, 2)
 
-  async function logout() 
+  async function logout() {
     if (supabase) await supabase.auth.signOut()
     setUser(null)
     navigate('/')
@@ -208,7 +198,7 @@ function AppShell({ user, setUser, movies, onRefreshMovies }: { user: SessionUse
           {userNav.map(item => <Link key={item.path} to={item.path} onClick={() => setMobileOpen(false)}><item.icon size={19} /><span>{item.label}</span></Link>)}
         </nav>
         <div className="sidebar-footer">
-          {user.role === 'admin' && <Link to="/admin" className="admin-link" onClick={() => setMobileOpen(false)}><ShieldCheck size={18} /> Admin Panel</Link>}
+          {user.role === 'admin' && <Link to="/admin" className="admin-link"><ShieldCheck size={18} /> Admin Panel</Link>}
           <button onClick={logout}><LogOut size={18} /> Log out</button>
         </div>
       </aside>
@@ -220,28 +210,25 @@ function AppShell({ user, setUser, movies, onRefreshMovies }: { user: SessionUse
           <div className="topbar-actions">
             <Link to="/notifications" className="icon-button"><Bell size={20} /><span className="notification-dot" /></Link>
             <Link to="/chat" className="icon-button"><MessageCircle size={20} /></Link>
-            <Link to="/profile" className="profile-chip"><div className="avatar">{initials}</div><span>{user.name}</span></Link>
+            <Link to="/profile" className="profile-chip"><div className="avatar">{user.name.split(' ').map(n => n[0]).join('').slice(0, 2)}</div><span>{user.name}</span></Link>
           </div>
         </header>
         <main className="app-content">
           <Routes>
-            <Route path="/dashboard" element={<Dashboard user={user} movies={movies} onOpen={setActiveMovie} />} />
-            <Route path="/library" element={<Library user={user} movies={movies} onOpen={setActiveMovie} onOpenUpload={() => setUploadOpen(true)} />} />
+            <Route path="/dashboard" element={<Dashboard user={user} />} />
+            <Route path="/library" element={<Library onOpen={setActiveMovie} />} />
             <Route path="/downloads" element={<DownloadsPage />} />
             <Route path="/chat" element={<ChatPage />} />
             <Route path="/notifications" element={<NotificationsPage />} />
             <Route path="/invite" element={<InvitePage />} />
             <Route path="/profile" element={<ProfilePage user={user} />} />
             <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/admin" element={user.role === 'admin' ? <AdminPage movies={movies} onOpenUpload={() => setUploadOpen(true)} onRefreshMovies={onRefreshMovies} /> : <Navigate to="/dashboard" replace />} />
+            <Route path="/admin" element={user.role === 'admin' ? <AdminPage /> : <Navigate to="/dashboard" replace />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </main>
       </div>
-      <AnimatePresence>
-        {activeMovie && <MovieModal movie={activeMovie} onClose={() => setActiveMovie(null)} />}
-        {uploadOpen && user.role === 'admin' && <UploadMovieModal onClose={() => setUploadOpen(false)} onUploaded={onRefreshMovies} />}
-      </AnimatePresence>
+      <AnimatePresence>{activeMovie && <MovieModal movie={activeMovie} onClose={() => setActiveMovie(null)} />}</AnimatePresence>
     </div>
   )
 }
@@ -250,10 +237,10 @@ function PageHeading({ eyebrow, title, action }: { eyebrow?: string; title: stri
   return <div className="page-heading"><div>{eyebrow && <span className="section-kicker">{eyebrow}</span>}<h1>{title}</h1></div>{action}</div>
 }
 
-function Dashboard({ user, movies, onOpen }: { user: SessionUser; movies: Movie[]; onOpen: (movie: Movie) => void }) {
+function Dashboard({ user }: { user: SessionUser }) {
   const navigate = useNavigate()
   const stats = [
-    { label: 'Available Movies', value: String(movies.length), icon: Film, tone: 'green' },
+    { label: 'Available Movies', value: '5', icon: Film, tone: 'green' },
     { label: 'Downloaded', value: '0', icon: Download, tone: 'blue' },
     { label: 'Friends Invited', value: '0', icon: UserPlus, tone: 'purple' },
     { label: 'Unread Messages', value: '0', icon: MessageCircle, tone: 'orange' },
@@ -267,7 +254,7 @@ function Dashboard({ user, movies, onOpen }: { user: SessionUser; movies: Movie[
       <div className="stats-grid">{stats.map(stat => <article className="stat-card" key={stat.label}><div className={stat-icon ${stat.tone}}><stat.icon /></div><div><strong>{stat.value}</strong><span>{stat.label}</span></div></article>)}</div>
       <section className="content-section">
         <div className="section-heading"><div><span className="section-kicker">NEW RELEASES</span><h2>Latest Movies</h2></div><button className="text-btn" onClick={() => navigate('/library')}>View all <ChevronRight size={16} /></button></div>
-        <MovieRail movies={movies.slice(0, 4)} onOpen={onOpen} />
+        <MovieRail movies={demoMovies.slice(0, 4)} />
       </section>
       <section className="dashboard-grid">
         <article className="panel invite-panel"><div className="panel-icon"><UserPlus /></div><div><span>INVITE FRIENDS</span><h3>Grow the community</h3><p>You have 5 invitation slots remaining.</p></div><button onClick={() => navigate('/invite')}>Invite <ChevronRight size={16} /></button></article>
@@ -277,22 +264,14 @@ function Dashboard({ user, movies, onOpen }: { user: SessionUser; movies: Movie[
   )
 }
 
-function Library({ user, movies, onOpen, onOpenUpload }: { user: SessionUser; movies: Movie[]; onOpen: (movie: Movie) => void; onOpenUpload: () => void }) {
+function Library({ onOpen }: { onOpen: (movie: Movie) => void }) {
   const [query, setQuery] = useState('')
   const [genre, setGenre] = useState('All')
-  const filtered = useMemo(() => movies.filter(movie => (genre === 'All' || movie.genre === genre) && movie.title.toLowerCase().includes(query.toLowerCase())), [movies, query, genre])
+  const filtered = useMemo(() => demoMovies.filter(movie => (genre === 'All' || movie.genre === genre) && movie.title.toLowerCase().includes(query.toLowerCase())), [query, genre])
   return (
     <>
-      <PageHeading
-        eyebrow="MOVIE LIBRARY"
-        title="Discover movies"
-        action={
-          user.role === 'admin'
-            ? <button className="primary-btn compact" onClick={onOpenUpload}><Upload size={16} /> Upload Movie</button>
-            : <button className="secondary-btn compact" disabled><Upload size={16} /> Uploads managed by admin</button>
-        }
-      />
-      <div className="filters"><div className="filter-search"><Search size={18} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search movies..." /></div><select value={genre} onChange={e => setGenre(e.target.value)}><option>All</option>{[...new Set(movies.map(movie => movie.genre))].map(item => <option key={item}>{item}</option>)}</select></div>
+      <PageHeading eyebrow="MOVIE LIBRARY" title="Discover movies" action={<button className="primary-btn compact"><Upload size={16} /> Uploads managed by admin</button>} />
+      <div className="filters"><div className="filter-search"><Search size={18} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search movies..." /></div><select value={genre} onChange={e => setGenre(e.target.value)}><option>All</option>{[...new Set(demoMovies.map(movie => movie.genre))].map(item => <option key={item}>{item}</option>)}</select></div>
       {filtered.length ? <div className="library-grid">{filtered.map(movie => <LibraryCard key={movie.id} movie={movie} onOpen={() => onOpen(movie)} />)}</div> : <EmptyState icon={<Film />} title="No movies found" text="Try changing your search or genre filter." />}
     </>
   )
@@ -308,89 +287,12 @@ function LibraryCard({ movie, onOpen }: { movie: Movie; onOpen: () => void }) {
   )
 }
 
-function UploadMovieModal({ onClose, onUploaded }: { onClose: () => void; onUploaded: () => Promise<void> }) {
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  async function handleUpload(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    setError('')
-    setSaving(true)
-    const form = new FormData(e.currentTarget)
-    const poster = String(form.get('poster') || '').trim()
-    const newMovie = {
-      title: String(form.get('title') || '').trim(),
-      description: String(form.get('description') || '').trim(),
-      genre: String(form.get('genre') || 'Action'),
-      year: Number(form.get('year') || 2026),
-      duration: String(form.get('duration') || '2h 00m').trim(),
-      poster,
-      backdrop: poster,
-      video_url: String(form.get('video_url') || '').trim(),
-      rating: Number(form.get('rating') || 8.5),
-      featured: form.get('featured') === 'on',
-    }
-    try {
-      if (!supabase) throw new Error('Supabase not configured')
-      const { error: insertError } = await supabase.from('movies').insert([newMovie])
-      if (insertError) throw insertError
-      await onUploaded()
-      onClose()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to upload movie.')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={onClose}>
-      <motion.div className="movie-modal" style={{ maxWidth: 540, padding: 24 }} initial={{ scale: .96, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: .96, y: 20 }} onMouseDown={e => e.stopPropagation()}>
-        <button className="modal-close" onClick={onClose}><X /></button>
-        <span className="section-kicker">ADMIN UPLOAD</span>
-        <h2 style={{ marginBottom: 16 }}>Publish New Movie</h2>
-        <form className="auth-form" style={{ padding: 0, maxWidth: '100%' }} onSubmit={handleUpload}>
-          <label>Movie Title<input name="title" placeholder="e.g. Extraction 3" required /></label>
-          <label>Description<textarea name="description" rows={3} placeholder="Short movie summary..." required style={{ width: '100%', padding: 10, borderRadius: 8, background: '#18181b', color: '#fff', border: '1px solid #27272a' }} /></label>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <label>Genre
-              <select name="genre" style={{ width: '100%', padding: 10, borderRadius: 8, background: '#18181b', color: '#fff', border: '1px solid #27272a' }}>
-                <option>Action</option>
-                <option>Sci-Fi</option>
-                <option>Drama</option>
-                <option>Thriller</option>
-                <option>Adventure</option>
-                <option>Comedy</option>
-                <option>Horror</option>
-              </select>
-            </label>
-            <label>Release Year<input name="year" type="number" defaultValue={2026} required /></label>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <label>Duration<input name="duration" defaultValue="2h 05m" required /></label>
-            <label>Rating (1-10)<input name="rating" type="number" step="0.1" defaultValue={8.5} required /></label>
-          </div>
-          <label>Poster Image URL<input name="poster" type="url" placeholder="https://..." required /></label>
-          <label>Movie Video / Download Link<input name="video_url" type="url" placeholder="https://..." required /></label>
-          <label className="check-label"><input type="checkbox" name="featured" /> Feature on homepage</label>
-          {error && <div className="form-error"><AlertTriangle size={16} />{error}</div>}
-          <button className="primary-btn auth-submit" disabled={saving}>{saving ? 'Publishing…' : 'Publish Movie'} <Upload size={16} /></button>
-        </form>
-      </motion.div>
-    </motion.div>
-  )
-}
-
 function MovieModal({ movie, onClose }: { movie: Movie; onClose: () => void }) {
   const [downloading, setDownloading] = useState(false)
   const [complete, setComplete] = useState(false)
   function download() {
     setDownloading(true)
-    setTimeout(() => {
-      setDownloading(false)
-      setComplete(true)
-      if (movie.video_url) window.open(movie.video_url, '_blank', 'noopener,noreferrer')
-    }, 600)
+    setTimeout(() => { setDownloading(false); setComplete(true) }, 900)
   }
   return (
     <motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={onClose}>
@@ -399,7 +301,7 @@ function MovieModal({ movie, onClose }: { movie: Movie; onClose: () => void }) {
         <div className="modal-backdrop-image" style={{ backgroundImage: linear-gradient(90deg, #111 10%, rgba(17,17,17,.35)), url(${movie.backdrop}) }}>
           <div className="modal-copy"><span className="section-kicker">{movie.genre}</span><h2>{movie.title}</h2><div className="movie-meta"><span>{movie.year}</span><i /><span>{movie.duration}</span><b>{movie.rating}</b></div></div>
         </div>
-        <div className="modal-body"><p>{movie.description}</p><div className="modal-actions"><button className="primary-btn" onClick={download} disabled={downloading}>{downloading ? 'Preparing secure link…' : complete ? <><Check size={18} /> Ready</> : <><Download size={18} /> Download / Watch</>}</button><button className="secondary-btn"><Bookmark size={18} /> Watchlist</button></div></div>
+        <div className="modal-body"><p>{movie.description}</p><div className="modal-actions"><button className="primary-btn" onClick={download} disabled={downloading}>{downloading ? 'Preparing secure link…' : complete ? <><Check size={18} /> Ready</> : <><Download size={18} /> Download</>}</button><button className="secondary-btn"><Bookmark size={18} /> Watchlist</button></div></div>
       </motion.div>
     </motion.div>
   )
@@ -427,7 +329,7 @@ function NotificationsPage() {
 
 function InvitePage() {
   const [copied, setCopied] = useState(false)
-  const link = window.location.origin + '/register?ref=CINEMAX-DEMO'
+  const link = ${window.location.origin}/register?ref=CINEMAX-DEMO
   async function copy() { await navigator.clipboard?.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 2000) }
   return (
     <>
@@ -441,8 +343,55 @@ function InvitePage() {
 }
 
 function ProfilePage({ user }: { user: SessionUser }) {
-  const initials = user.name.split(' ').map(part => part.charAt(0)).join('').slice(0, 2)
-  return <><PageHeading eyebrow="MEMBER PROFILE" title="My profile" /><section className="profile-layout"><aside className="panel profile-card"><div className="profile-avatar">{initials}</div><h2>{user.name}</h2><p>{user.email}</p><span className="role-badge">{user.role}</span></aside><section className="panel profile-form"><h3>Profile details</h3><div className="form-grid"><label>Full name<input defaultValue={user.name} /></label><label>Username<input defaultValue="alexm" /></label><label>Email<input defaultValue={user.email} type="email" /></label><label>Bio<textarea placeholder="Tell the community about yourself…" /></label></div><button className="primary-btn">Save changes</button></section></section></>
+  return <><PageHeading eyebrow="MEMBER PROFILE" title="My profile" /><section className="profile-layout"><aside className="panel profile-card"><div className="profile-avatar">{user.name.split(' ').map(n => n[0]).join('').slice(0, 2)}</div><h2>{user.name}</h2><p>{user.email}</p><span className="role-badge">{user.role}</span></aside><section className="panel profile-form"><h3>Profile details</h3><div className="form-grid"><label>Full name<input defaultValue={user.name} /></label><label>Username<input defaultValue="alexm" /></label><label>Email<input defaultValue={user.email} type="email" /></label><label>Bio<textarea placeholder="Tell the community about yourself…" /></label></div><button className="primary-btn">Save changes</button></section></section></>
 }
 
-function SettingsPage() {    
+function SettingsPage() {
+  return <><PageHeading eyebrow="ACCOUNT" title="Settings" /><section className="settings-list"><div className="panel setting-row"><div><h3>Push notifications</h3><p>Receive notifications for messages and new releases.</p></div><button className="toggle active"><span /></button></div><div className="panel setting-row"><div><h3>Email updates</h3><p>Receive community announcements by email.</p></div><button className="toggle"><span /></button></div><div className="panel setting-row"><div><h3>Change password</h3><p>Update your account password securely.</p></div><button className="secondary-btn compact">Change</button></div></section></>
+}
+
+function AdminPage() {
+  const adminStats = [
+    { label: 'Registered users', value: '0', icon: Users },
+    { label: 'Total movies', value: String(demoMovies.length), icon: Film },
+    { label: 'Total downloads', value: '0', icon: Download },
+    { label: 'Pending reports', value: '0', icon: AlertTriangle },
+  ]
+  return (
+    <>
+      <PageHeading eyebrow="ADMIN CONTROL" title="Platform overview" action={<button className="primary-btn compact"><Upload size={16} /> Upload Movie</button>} />
+      <div className="stats-grid admin-stats">{adminStats.map(stat => <article className="stat-card" key={stat.label}><div className="stat-icon green"><stat.icon /></div><div><strong>{stat.value}</strong><span>{stat.label}</span></div></article>)}</div>
+      <div className="admin-grid"><section className="panel admin-chart"><div className="panel-title"><h3>Platform activity</h3><span>Last 7 days</span></div><div className="chart-bars">{[32, 48, 40, 62, 54, 76, 68].map((height, i) => <div key={i}><span style={{ height: ${height}% }} /><small>{['M','T','W','T','F','S','S'][i]}</small></div>)}</div></section><section className="panel admin-actions"><h3>Quick actions</h3><button><Users /> Manage users <ChevronRight /></button><button><Film /> Manage movies <ChevronRight /></button><button><Bell /> Send announcement <ChevronRight /></button><button><BarChart3 /> View analytics <ChevronRight /></button></section></div>
+    </>
+  )
+}
+
+function EmptyState({ icon, title, text }: { icon: React.ReactNode; title: string; text: string }) {
+  return <div className="empty-state"><div>{icon}</div><h2>{title}</h2><p>{text}</p></div>
+}
+
+function App() {
+  const [user, setUser] = useState<SessionUser | null>(null)
+
+  useEffect(() => {
+    if (!supabase) return
+    void supabase.auth.getSession().then(({ data }) => {
+      if (data.session?.user) setUser({ id: data.session.user.id, name: String(data.session.user.user_metadata.full_name || 'Member'), email: data.session.user.email || '', role: 'user' })
+    })
+  }, [])
+
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route path="/login" element={user ? <Navigate to="/dashboard" /> : <AuthPage mode="login" setUser={setUser} />} />
+        <Route path="/register" element={user ? <Navigate to="/dashboard" /> : <AuthPage mode="register" setUser={setUser} />} />
+        <Route path="/terms" element={<Landing />} />
+        <Route path="/privacy" element={<Landing />} />
+        <Route path="/*" element={user ? <AppShell user={user} setUser={setUser} /> : <Navigate to="/login" replace />} />
+      </Routes>
+    </BrowserRouter>
+  )
+}
+
+export default App
