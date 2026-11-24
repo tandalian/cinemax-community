@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { BrowserRouter, Link, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
-import { Bell, ChevronRight, Download, Film, Home, LogOut, Upload, Users, X } from 'lucide-react'
+import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import { Bell, ChevronRight, Download, Film, Home, LogOut, MessageCircle, Trash2, Upload, Users, X } from 'lucide-react'
 import { Upload as TusUpload } from 'tus-js-client'
+import { ChatPage, CommunityPage, InvitePanel } from './CommunityFeatures'
 import {
   isSupabaseConfigured,
   supabase,
@@ -63,7 +64,11 @@ function AuthPage({
   onSignedIn: (user: SessionUser) => void
   initialError: string
 }) {
-  const [mode, setMode] = useState<'login' | 'register'>('login')
+  const location = useLocation()
+  const inviteCode = new URLSearchParams(location.search).get('invite')?.trim() || ''
+  const [mode, setMode] = useState<'login' | 'register'>(
+    location.pathname === '/register' ? 'register' : 'login',
+  )
   const [error, setError] = useState(initialError)
   const [busy, setBusy] = useState(false)
 
@@ -102,6 +107,7 @@ function AuthPage({
               data: {
                 full_name: String(form.get('name') || ''),
                 username: String(form.get('username') || ''),
+                ...(inviteCode ? { invitation_code: inviteCode } : {}),
               },
             },
           })
@@ -135,6 +141,9 @@ function AuthPage({
             {mode === 'login' ? 'WELCOME BACK' : 'CREATE YOUR ACCOUNT'}
           </span>
           <h1>{mode === 'login' ? 'Sign in' : 'Join the community'}</h1>
+          {mode === 'register' && inviteCode && (
+            <p className="config-note">You are joining through a member invitation.</p>
+          )}
 
           {mode === 'register' && (
             <>
@@ -496,6 +505,7 @@ function AdminPage({ user }: { user: SessionUser }) {
   const [movies, setMovies] = useState<MovieRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [deletingMovieId, setDeletingMovieId] = useState<string | null>(null)
 
   async function loadMovies() {
     if (!supabase) return
@@ -520,6 +530,46 @@ function AdminPage({ user }: { user: SessionUser }) {
   useEffect(() => {
     void loadMovies()
   }, [])
+
+  async function deleteMovie(movie: MovieRow) {
+    if (!supabase || deletingMovieId) return
+    if (!window.confirm(`Delete "${movie.title}" and its uploaded files? This cannot be undone.`)) return
+
+    setDeletingMovieId(movie.id)
+    setError('')
+
+    const { error: deleteError } = await supabase
+      .from('movies')
+      .delete()
+      .eq('id', movie.id)
+      .select('id')
+      .single()
+
+    if (deleteError) {
+      setError(deleteError.message)
+      setDeletingMovieId(null)
+      return
+    }
+
+    setMovies(current => current.filter(item => item.id !== movie.id))
+    const cleanupFailures: string[] = []
+    const { error: videoCleanupError } = await supabase.storage
+      .from('movies')
+      .remove([movie.video_path])
+    if (videoCleanupError) cleanupFailures.push(`movie file "${movie.video_path}": ${videoCleanupError.message}`)
+
+    if (movie.poster_path) {
+      const { error: posterCleanupError } = await supabase.storage
+        .from('posters')
+        .remove([movie.poster_path])
+      if (posterCleanupError) cleanupFailures.push(`poster "${movie.poster_path}": ${posterCleanupError.message}`)
+    }
+
+    if (cleanupFailures.length) {
+      setError(`Movie deleted from the library, but storage cleanup failed: ${cleanupFailures.join('; ')}`)
+    }
+    setDeletingMovieId(null)
+  }
 
   return (
     <main className="app-content">
@@ -547,6 +597,16 @@ function AdminPage({ user }: { user: SessionUser }) {
               <strong>{movie.title}</strong>
               <p>{movie.release_year} · {movie.language}</p>
             </div>
+            <button
+              type="button"
+              className="delete-movie-btn"
+              onClick={() => void deleteMovie(movie)}
+              disabled={deletingMovieId !== null}
+              aria-label={`Delete ${movie.title}`}
+              title={deletingMovieId === movie.id ? 'Deleting movie…' : `Delete ${movie.title}`}
+            >
+              <Trash2 size={17} />
+            </button>
           </div>
         ))}
       </section>
@@ -667,6 +727,24 @@ function AppShell({
   const navigate = useNavigate()
   const [error, setError] = useState('')
 
+  useEffect(() => {
+    async function updatePresence() {
+      const client = supabase
+      if (!client) return
+
+      const { error: presenceError } = await client
+        .from('user_presence')
+        .update({ online: true, last_seen_at: new Date().toISOString() })
+        .eq('user_id', user.id)
+
+      if (presenceError) setError(presenceError.message)
+    }
+
+    void updatePresence()
+    const timer = window.setInterval(() => void updatePresence(), 30_000)
+    return () => window.clearInterval(timer)
+  }, [user.id])
+
   async function signOut() {
     if (supabase) {
       const { error: signOutError } = await supabase.auth.signOut()
@@ -694,6 +772,8 @@ function AppShell({
         <nav>
           <Link to="/dashboard"><Home size={19} /><span>Dashboard</span></Link>
           <Link to="/library"><Film size={19} /><span>Movies</span></Link>
+          <Link to="/community"><Users size={19} /><span>Members</span></Link>
+          <Link to="/chat"><MessageCircle size={19} /><span>Community Chat</span></Link>
           {user.role === 'admin' && (
             <Link to="/admin"><Users size={19} /><span>Admin Panel</span></Link>
           )}
@@ -728,10 +808,17 @@ function AppShell({
                     Open Admin Panel
                   </Link>
                 )}
+                <div className="dashboard-community-actions">
+                  <Link to="/community" className="secondary-btn"><Users size={16} /> Meet members</Link>
+                  <Link to="/chat" className="secondary-btn"><MessageCircle size={16} /> Open chat</Link>
+                </div>
+                <InvitePanel compact />
               </main>
             }
           />
           <Route path="/library" element={<LibraryPage />} />
+          <Route path="/community" element={<CommunityPage userId={user.id} />} />
+          <Route path="/chat" element={<ChatPage userId={user.id} />} />
           <Route
             path="/admin"
             element={user.role === 'admin' ? <AdminPage user={user} /> : <Navigate to="/dashboard" replace />}
