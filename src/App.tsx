@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Film, LogOut, Upload, X } from 'lucide-react'
+import { BrowserRouter, Link, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
+import { Bell, ChevronRight, Download, Film, Home, LogOut, Upload, Users, X } from 'lucide-react'
 import { Upload as TusUpload } from 'tus-js-client'
 import { isSupabaseConfigured, supabase, supabaseUrl } from './lib/supabase'
 import './App.css'
@@ -12,10 +13,14 @@ type SessionUser = {
   role: 'user' | 'admin'
 }
 
-type AdminMovie = {
+type MovieRow = {
   id: string
   title: string
+  description: string
+  video_path: string
+  poster_path: string | null
   release_year: number
+  language: string
   created_at: string
 }
 
@@ -24,9 +29,7 @@ async function getSessionUser(authUser: {
   email?: string
   user_metadata?: Record<string, unknown>
 }): Promise<SessionUser> {
-  if (!supabase) {
-    throw new Error('Supabase is not configured.')
-  }
+  if (!supabase) throw new Error('Supabase is not configured.')
 
   const { data, error } = await supabase
     .from('user_roles')
@@ -60,7 +63,7 @@ function AuthPage({
     setError('')
 
     if (!supabase) {
-      setError('Supabase is not configured. Add your Supabase URL and anon key to .env.')
+      setError('Supabase is not configured. Set its URL and anon key in your .env file.')
       return
     }
 
@@ -74,7 +77,7 @@ function AuthPage({
     }
 
     if (mode === 'register' && password.length < 8) {
-      setError('Use a password with at least 8 characters.')
+      setError('Password must be at least 8 characters.')
       return
     }
 
@@ -101,8 +104,7 @@ function AuthPage({
         return
       }
 
-      const user = await getSessionUser(result.data.user)
-      onSignedIn(user)
+      onSignedIn(await getSessionUser(result.data.user))
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Sign-in failed.')
     } finally {
@@ -123,7 +125,7 @@ function AuthPage({
           <span className="section-kicker">
             {mode === 'login' ? 'WELCOME BACK' : 'CREATE YOUR ACCOUNT'}
           </span>
-          <h1>{mode === 'login' ? 'Sign in' : 'Create account'}</h1>
+          <h1>{mode === 'login' ? 'Sign in' : 'Join the community'}</h1>
 
           {mode === 'register' && (
             <>
@@ -166,7 +168,7 @@ function AuthPage({
   )
 }
 
-function uploadMovieResumable(
+function uploadMovieFile(
   file: File,
   path: string,
   accessToken: string,
@@ -195,9 +197,7 @@ function uploadMovieResumable(
       chunkSize: 6 * 1024 * 1024,
       removeFingerprintOnSuccess: true,
       onError: reject,
-      onProgress: (uploaded, total) => {
-        onProgress(Math.round((uploaded / total) * 100))
-      },
+      onProgress: (uploaded, total) => onProgress(Math.round((uploaded / total) * 100)),
       onSuccess: () => resolve(),
     })
 
@@ -229,8 +229,10 @@ function MovieUploadForm({
 
     const form = new FormData(event.currentTarget)
     const file = form.get('movie_file')
+    const poster = form.get('poster_file')
     const title = String(form.get('title') || '').trim()
     const description = String(form.get('description') || '').trim()
+    const genre = String(form.get('genre') || '').trim()
     const language = String(form.get('language') || 'English').trim()
     const releaseYear = Number(form.get('release_year'))
     const durationMinutes = Number(form.get('duration_minutes') || 0)
@@ -246,7 +248,13 @@ function MovieUploadForm({
       return
     }
 
-    if (!title || !description || !Number.isInteger(releaseYear) || releaseYear < 1888 || releaseYear > 2100) {
+    if (
+      !title ||
+      !description ||
+      !Number.isInteger(releaseYear) ||
+      releaseYear < 1888 ||
+      releaseYear > 2100
+    ) {
       setError('Enter a title, description, and valid release year.')
       return
     }
@@ -265,9 +273,20 @@ function MovieUploadForm({
       return
     }
 
-    setBusy(true)
+    if (poster instanceof File && poster.size > 0) {
+      if (poster.size > 10 * 1024 * 1024) {
+        setError('The poster must be 10 MB or smaller.')
+        return
+      }
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(poster.type)) {
+        setError('Use a JPG, PNG, or WebP poster.')
+        return
+      }
+    }
 
+    setBusy(true)
     let moviePath = ''
+    let posterPath = ''
 
     try {
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
@@ -292,12 +311,51 @@ function MovieUploadForm({
       const safeExtension = extension.replace(/[^a-z0-9]/g, '') || 'mp4'
       moviePath = `${session.user.id}/${crypto.randomUUID()}.${safeExtension}`
 
-      await uploadMovieResumable(file, moviePath, session.access_token, contentType, setProgress)
+      await uploadMovieFile(file, moviePath, session.access_token, contentType, setProgress)
+
+      let categoryId: string | null = null
+
+      if (genre) {
+        const { data: category, error: categoryReadError } = await supabase
+          .from('movie_categories')
+          .select('id')
+          .eq('name', genre)
+          .maybeSingle()
+
+        if (categoryReadError) throw categoryReadError
+
+        if (category) {
+          categoryId = category.id
+        } else {
+          const { data: newCategory, error: categoryInsertError } = await supabase
+            .from('movie_categories')
+            .insert({ name: genre })
+            .select('id')
+            .single()
+
+          if (categoryInsertError) throw categoryInsertError
+          categoryId = newCategory.id
+        }
+      }
+
+      if (poster instanceof File && poster.size > 0) {
+        const posterExtension =
+          poster.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg'
+        posterPath = `${session.user.id}/${crypto.randomUUID()}.${posterExtension}`
+
+        const { error: posterError } = await supabase.storage
+          .from('posters')
+          .upload(posterPath, poster, { contentType: poster.type, upsert: false })
+
+        if (posterError) throw posterError
+      }
 
       const { error: insertError } = await supabase.from('movies').insert({
         title,
         description,
         video_path: moviePath,
+        poster_path: posterPath || null,
+        category_id: categoryId,
         release_year: releaseYear,
         language,
         duration_seconds: durationMinutes > 0 ? Math.round(durationMinutes * 60) : null,
@@ -308,7 +366,6 @@ function MovieUploadForm({
       })
 
       if (insertError) throw insertError
-
       onUploaded()
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : 'Movie upload failed.'
@@ -316,7 +373,16 @@ function MovieUploadForm({
       if (moviePath) {
         const { error: cleanupError } = await supabase.storage.from('movies').remove([moviePath])
         if (cleanupError) {
-          setError(`${message} Cleanup failed: ${cleanupError.message}`)
+          setError(`${message} Movie cleanup failed: ${cleanupError.message}`)
+          setBusy(false)
+          return
+        }
+      }
+
+      if (posterPath) {
+        const { error: cleanupError } = await supabase.storage.from('posters').remove([posterPath])
+        if (cleanupError) {
+          setError(`${message} Poster cleanup failed: ${cleanupError.message}`)
           setBusy(false)
           return
         }
@@ -347,13 +413,29 @@ function MovieUploadForm({
 
           <label>Movie title<input name="title" required maxLength={200} /></label>
           <label>Description<textarea name="description" required maxLength={5000} rows={4} /></label>
-          <label>Release year<input name="release_year" type="number" min="1888" max="2100" required /></label>
-          <label>Language<input name="language" defaultValue="English" required maxLength={80} /></label>
-          <label>Duration (minutes)<input name="duration_minutes" type="number" min="0" /></label>
+
+          <div className="upload-fields">
+            <label>Genre<input name="genre" maxLength={80} /></label>
+            <label>Release year<input name="release_year" type="number" min="1888" max="2100" required /></label>
+            <label>Language<input name="language" defaultValue="English" required maxLength={80} /></label>
+            <label>Duration (minutes)<input name="duration_minutes" type="number" min="0" /></label>
+          </div>
+
           <label>
             Movie file (MP4, WebM, MOV, or MKV; max 1 GB)
-            <input name="movie_file" type="file" accept="video/mp4,video/webm,video/quicktime,video/x-matroska" required />
+            <input
+              name="movie_file"
+              type="file"
+              accept="video/mp4,video/webm,video/quicktime,video/x-matroska"
+              required
+            />
           </label>
+
+          <label>
+            Poster (optional)
+            <input name="poster_file" type="file" accept="image/jpeg,image/png,image/webp" />
+          </label>
+
           <label className="upload-featured">
             <input name="featured" type="checkbox" />
             Feature this movie
@@ -382,9 +464,9 @@ function MovieUploadForm({
   )
 }
 
-function AdminPage({ user, onSignOut }: { user: SessionUser; onSignOut: () => void }) {
+function AdminPage({ user }: { user: SessionUser }) {
   const [uploadOpen, setUploadOpen] = useState(false)
-  const [movies, setMovies] = useState<AdminMovie[]>([])
+  const [movies, setMovies] = useState<MovieRow[]>([])
   const [loadingMovies, setLoadingMovies] = useState(true)
   const [error, setError] = useState('')
 
@@ -396,13 +478,13 @@ function AdminPage({ user, onSignOut }: { user: SessionUser; onSignOut: () => vo
 
     const { data, error: queryError } = await supabase
       .from('movies')
-      .select('id,title,release_year,created_at')
+      .select('id,title,description,video_path,poster_path,release_year,language,created_at')
       .order('created_at', { ascending: false })
 
     if (queryError) {
       setError(queryError.message)
     } else {
-      setMovies(data || [])
+      setMovies((data || []) as MovieRow[])
     }
 
     setLoadingMovies(false)
@@ -413,55 +495,35 @@ function AdminPage({ user, onSignOut }: { user: SessionUser; onSignOut: () => vo
   }, [])
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="sidebar-brand">
-          <div className="brand">
-            <div className="brand-mark"><Film size={20} /></div>
-            <span>CINEMAX</span>
-            <small>COMMUNITY</small>
-          </div>
+    <div className="app-content">
+      <div className="page-heading">
+        <div>
+          <span className="section-kicker">ADMIN CONTROL</span>
+          <h1>Movie management</h1>
+          <p>Signed in as {user.email}</p>
         </div>
-        <div className="sidebar-footer">
-          <button onClick={onSignOut}><LogOut size={18} /> Log out</button>
-        </div>
-      </aside>
+        <button className="primary-btn compact" onClick={() => setUploadOpen(true)}>
+          <Upload size={16} /> Upload Movie
+        </button>
+      </div>
 
-      <main className="app-main">
-        <header className="topbar">
-          <span>Signed in as {user.email} · Admin</span>
-        </header>
+      <section className="panel notification-list">
+        <h2>Uploaded movies ({movies.length})</h2>
 
-        <div className="app-content">
-          <div className="page-heading">
+        {loadingMovies && <p>Loading movies…</p>}
+        {error && <div className="form-error" role="alert">{error}</div>}
+        {!loadingMovies && !error && movies.length === 0 && <p>No movies uploaded yet.</p>}
+
+        {movies.map(movie => (
+          <div className="notification-item" key={movie.id}>
+            <div className="stat-icon green"><Film /></div>
             <div>
-              <span className="section-kicker">ADMIN CONTROL</span>
-              <h1>Movie management</h1>
+              <strong>{movie.title}</strong>
+              <p>{movie.release_year} · {movie.language}</p>
             </div>
-            <button className="primary-btn compact" onClick={() => setUploadOpen(true)}>
-              <Upload size={16} /> Upload Movie
-            </button>
           </div>
-
-          <section className="panel notification-list">
-            <h2>Uploaded movies ({movies.length})</h2>
-
-            {loadingMovies && <p>Loading movies…</p>}
-            {error && <div className="form-error" role="alert">{error}</div>}
-            {!loadingMovies && !error && movies.length === 0 && <p>No movies uploaded yet.</p>}
-
-            {movies.map(movie => (
-              <div className="notification-item" key={movie.id}>
-                <div className="stat-icon green"><Film /></div>
-                <div>
-                  <strong>{movie.title}</strong>
-                  <p>{movie.release_year} · Added {new Date(movie.created_at).toLocaleDateString()}</p>
-                </div>
-              </div>
-            ))}
-          </section>
-        </div>
-      </main>
+        ))}
+      </section>
 
       {uploadOpen && (
         <MovieUploadForm
@@ -477,24 +539,171 @@ function AdminPage({ user, onSignOut }: { user: SessionUser; onSignOut: () => vo
   )
 }
 
-function MemberPage({ user, onSignOut }: { user: SessionUser; onSignOut: () => void }) {
+function LibraryPage() {
+  const [movies, setMovies] = useState<MovieRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadMovies() {
+      if (!supabase) {
+        setError('Supabase is not configured.')
+        setLoading(false)
+        return
+      }
+
+      const { data, error: queryError } = await supabase
+        .from('movies')
+        .select('id,title,description,video_path,poster_path,release_year,language,created_at')
+        .eq('published', true)
+        .order('created_at', { ascending: false })
+
+      if (cancelled) return
+
+      if (queryError) setError(queryError.message)
+      else setMovies((data || []) as MovieRow[])
+
+      setLoading(false)
+    }
+
+    void loadMovies()
+    return () => { cancelled = true }
+  }, [])
+
+  async function downloadMovie(movie: MovieRow) {
+    if (!supabase) return
+
+    const { data, error: downloadError } = await supabase.storage
+      .from('movies')
+      .createSignedUrl(movie.video_path, 60)
+
+    if (downloadError) {
+      setError(downloadError.message)
+      return
+    }
+
+    window.location.assign(data.signedUrl)
+  }
+
   return (
-    <main className="app-content">
+    <div className="app-content">
       <div className="page-heading">
         <div>
-          <span className="section-kicker">CINEMAX COMMUNITY</span>
-          <h1>Welcome, {user.name}</h1>
-          <p>Your account is signed in as a member.</p>
+          <span className="section-kicker">MOVIE LIBRARY</span>
+          <h1>Movies</h1>
         </div>
-        <button className="secondary-btn" onClick={onSignOut}>
-          <LogOut size={16} /> Log out
-        </button>
       </div>
-    </main>
+
+      {loading && <p>Loading movies…</p>}
+      {error && <div className="form-error" role="alert">{error}</div>}
+      {!loading && !error && movies.length === 0 && <p>No movies have been published yet.</p>}
+
+      <div className="library-grid">
+        {movies.map(movie => {
+          const posterUrl = movie.poster_path && supabase
+            ? supabase.storage.from('posters').getPublicUrl(movie.poster_path).data.publicUrl
+            : ''
+
+          return (
+            <article className="library-card" key={movie.id}>
+              <div className="library-poster">
+                {posterUrl ? <img src={posterUrl} alt={movie.title} /> : <Film />}
+              </div>
+              <div className="library-info">
+                <h3>{movie.title}</h3>
+                <p>{movie.description}</p>
+                <div className="movie-meta">
+                  <span>{movie.release_year}</span><i /><span>{movie.language}</span>
+                </div>
+                <button className="download-btn" onClick={() => void downloadMovie(movie)}>
+                  <Download size={17} /> Download
+                </button>
+              </div>
+            </article>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 
-export default function App() {
+function AppShell({
+  user,
+  setUser,
+}: {
+  user: SessionUser
+  setUser: (user: SessionUser | null) => void
+}) {
+  const navigate = useNavigate()
+
+  async function signOut() {
+    if (supabase) {
+      const { error } = await supabase.auth.signOut()
+      if (error) return
+    }
+    setUser(null)
+    navigate('/login')
+  }
+
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="sidebar-brand">
+          <div className="brand">
+            <div className="brand-mark"><Film size={20} /></div>
+            <span>CINEMAX</span>
+            <small>COMMUNITY</small>
+          </div>
+        </div>
+
+        <nav>
+          <Link to="/dashboard"><Home size={19} /><span>Dashboard</span></Link>
+          <Link to="/library"><Film size={19} /><span>Movies</span></Link>
+          {user.role === 'admin' && (
+            <Link to="/admin"><Users size={19} /><span>Admin Panel</span></Link>
+          )}
+        </nav>
+
+        <div className="sidebar-footer">
+          <button onClick={() => void signOut()}><LogOut size={18} /> Log out</button>
+        </div>
+      </aside>
+
+      <div className="app-main">
+        <header className="topbar">
+          <span>{user.name} · {user.role}</span>
+          <Bell size={20} />
+        </header>
+
+        <Routes>
+          <Route
+            path="/dashboard"
+            element={
+              <main className="app-content">
+                <span className="section-kicker">CINEMAX COMMUNITY</span>
+                <h1>Welcome, {user.name}</h1>
+                <Link to="/library" className="primary-btn">Browse Movies <ChevronRight size={18} /></Link>
+                {user.role === 'admin' && (
+                  <Link to="/admin" className="secondary-btn">Open Admin Panel</Link>
+                )}
+              </main>
+            }
+          />
+          <Route path="/library" element={<LibraryPage />} />
+          <Route
+            path="/admin"
+            element={user.role === 'admin' ? <AdminPage user={user} /> : <Navigate to="/dashboard" replace />}
+          />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        </Routes>
+      </div>
+    </div>
+  )
+}
+
+function AppRoutes() {
   const [user, setUser] = useState<SessionUser | null>(null)
   const [loading, setLoading] = useState(true)
   const [startupError, setStartupError] = useState('')
@@ -526,34 +735,37 @@ export default function App() {
       }
     })
 
-    return () => {
-      cancelled = true
-    }
+    return () => { cancelled = true }
   }, [])
 
-  async function signOut() {
-    if (supabase) {
-      const { error } = await supabase.auth.signOut()
-      if (error) {
-        setStartupError(error.message)
-        return
-      }
-    }
+  if (loading) return <main className="app-content"><p>Loading your account…</p></main>
 
-    setUser(null)
-  }
+  return (
+    <Routes>
+      <Route
+        path="/login"
+        element={user
+          ? <Navigate to={user.role === 'admin' ? '/admin' : '/dashboard'} replace />
+          : <AuthPage onSignedIn={setUser} initialError={startupError} />}
+      />
+      <Route
+        path="/register"
+        element={user
+          ? <Navigate to={user.role === 'admin' ? '/admin' : '/dashboard'} replace />
+          : <AuthPage onSignedIn={setUser} initialError={startupError} />}
+      />
+      <Route
+        path="/*"
+        element={user ? <AppShell user={user} setUser={setUser} /> : <Navigate to="/login" replace />}
+      />
+    </Routes>
+  )
+}
 
-  if (loading) {
-    return <main className="app-content"><p>Loading your account…</p></main>
-  }
-
-  if (!user) {
-    return <AuthPage onSignedIn={setUser} initialError={startupError} />
-  }
-
-  if (user.role === 'admin') {
-    return <AdminPage user={user} onSignOut={() => void signOut()} />
-  }
-
-  return <MemberPage user={user} onSignOut={() => void signOut()} />
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AppRoutes />
+    </BrowserRouter>
+  )
 }
