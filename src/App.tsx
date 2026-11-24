@@ -4,6 +4,7 @@ import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate 
 import { Bell, ChevronRight, Download, Film, Home, LogOut, MessageCircle, Trash2, Upload, Users, X } from 'lucide-react'
 import { Upload as TusUpload } from 'tus-js-client'
 import { ChatPage, CommunityPage, InvitePanel } from './CommunityFeatures'
+import MoviePosterBackground from './MoviePosterBackground'
 import {
   isSupabaseConfigured,
   supabase,
@@ -760,6 +761,7 @@ function AppShell({
 
   return (
     <div className="app-shell">
+      <MoviePosterBackground />
       <aside className="sidebar">
         <div className="sidebar-brand">
           <div className="brand">
