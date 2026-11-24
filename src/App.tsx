@@ -3,7 +3,12 @@ import type { FormEvent } from 'react'
 import { BrowserRouter, Link, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import { Bell, ChevronRight, Download, Film, Home, LogOut, Upload, Users, X } from 'lucide-react'
 import { Upload as TusUpload } from 'tus-js-client'
-import { isSupabaseConfigured, supabase, supabaseUrl } from './lib/supabase'
+import {
+  isSupabaseConfigured,
+  supabase,
+  supabaseAnonKey,
+  supabaseUrl,
+} from './lib/supabase'
 import './App.css'
 
 type SessionUser = {
@@ -41,7 +46,11 @@ async function getSessionUser(authUser: {
 
   return {
     id: authUser.id,
-    name: String(authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'Member'),
+    name: String(
+      authUser.user_metadata?.full_name ||
+      authUser.email?.split('@')[0] ||
+      'Member',
+    ),
     email: authUser.email || '',
     role: data.role === 'admin' ? 'admin' : 'user',
   }
@@ -63,7 +72,7 @@ function AuthPage({
     setError('')
 
     if (!supabase) {
-      setError('Supabase is not configured. Set its URL and anon key in your .env file.')
+      setError('Supabase is not configured. Add its URL and anon key to your .env file.')
       return
     }
 
@@ -176,8 +185,8 @@ function uploadMovieFile(
   onProgress: (progress: number) => void,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    if (!supabaseUrl) {
-      reject(new Error('Supabase URL is not configured.'))
+    if (!supabaseUrl || !supabaseAnonKey) {
+      reject(new Error('Supabase URL or anon key is not configured.'))
       return
     }
 
@@ -186,6 +195,7 @@ function uploadMovieFile(
       retryDelays: [0, 3000, 5000, 10000, 20000],
       headers: {
         authorization: `Bearer ${accessToken}`,
+        apikey: supabaseAnonKey,
         'x-upsert': 'false',
       },
       metadata: {
@@ -197,7 +207,9 @@ function uploadMovieFile(
       chunkSize: 6 * 1024 * 1024,
       removeFingerprintOnSuccess: true,
       onError: reject,
-      onProgress: (uploaded, total) => onProgress(Math.round((uploaded / total) * 100)),
+      onProgress: (uploaded, total) => {
+        onProgress(Math.round((uploaded / total) * 100))
+      },
       onSuccess: () => resolve(),
     })
 
@@ -266,9 +278,11 @@ function MovieUploadForm({
       mov: 'video/quicktime',
       mkv: 'video/x-matroska',
     }
-    const contentType = file.type || contentTypes[extension]
 
-    if (!contentType || !Object.values(contentTypes).includes(contentType)) {
+    // Use the extension because browsers sometimes report an incorrect MIME type.
+    const contentType = contentTypes[extension]
+
+    if (!contentType) {
       setError('Use an MP4, WebM, MOV, or MKV movie file.')
       return
     }
@@ -278,6 +292,7 @@ function MovieUploadForm({
         setError('The poster must be 10 MB or smaller.')
         return
       }
+
       if (!['image/jpeg', 'image/png', 'image/webp'].includes(poster.type)) {
         setError('Use a JPG, PNG, or WebP poster.')
         return
@@ -285,6 +300,8 @@ function MovieUploadForm({
     }
 
     setBusy(true)
+    setProgress(0)
+
     let moviePath = ''
     let posterPath = ''
 
@@ -308,7 +325,7 @@ function MovieUploadForm({
         throw new Error('Only an admin can upload movies.')
       }
 
-      const safeExtension = extension.replace(/[^a-z0-9]/g, '') || 'mp4'
+      const safeExtension = extension.replace(/[^a-z0-9]/g, '')
       moviePath = `${session.user.id}/${crypto.randomUUID()}.${safeExtension}`
 
       await uploadMovieFile(file, moviePath, session.access_token, contentType, setProgress)
@@ -345,12 +362,15 @@ function MovieUploadForm({
 
         const { error: posterError } = await supabase.storage
           .from('posters')
-          .upload(posterPath, poster, { contentType: poster.type, upsert: false })
+          .upload(posterPath, poster, {
+            contentType: poster.type,
+            upsert: false,
+          })
 
         if (posterError) throw posterError
       }
 
-      const { error: insertError } = await supabase.from('movies').insert({
+      const { error: movieError } = await supabase.from('movies').insert({
         title,
         description,
         video_path: moviePath,
@@ -365,7 +385,8 @@ function MovieUploadForm({
         created_by: session.user.id,
       })
 
-      if (insertError) throw insertError
+      if (movieError) throw movieError
+
       onUploaded()
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : 'Movie upload failed.'
@@ -403,7 +424,13 @@ function MovieUploadForm({
         aria-labelledby="upload-title"
         onMouseDown={event => event.stopPropagation()}
       >
-        <button className="modal-close" onClick={onClose} disabled={busy} aria-label="Close">
+        <button
+          type="button"
+          className="modal-close"
+          onClick={onClose}
+          disabled={busy}
+          aria-label="Close upload form"
+        >
           <X />
         </button>
 
@@ -426,14 +453,14 @@ function MovieUploadForm({
             <input
               name="movie_file"
               type="file"
-              accept="video/mp4,video/webm,video/quicktime,video/x-matroska"
+              accept=".mp4,.webm,.mov,.mkv,video/mp4,video/webm,video/quicktime,video/x-matroska"
               required
             />
           </label>
 
           <label>
-            Poster (optional)
-            <input name="poster_file" type="file" accept="image/jpeg,image/png,image/webp" />
+            Poster (optional JPG, PNG, or WebP; max 10 MB)
+            <input name="poster_file" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" />
           </label>
 
           <label className="upload-featured">
@@ -467,13 +494,13 @@ function MovieUploadForm({
 function AdminPage({ user }: { user: SessionUser }) {
   const [uploadOpen, setUploadOpen] = useState(false)
   const [movies, setMovies] = useState<MovieRow[]>([])
-  const [loadingMovies, setLoadingMovies] = useState(true)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   async function loadMovies() {
     if (!supabase) return
 
-    setLoadingMovies(true)
+    setLoading(true)
     setError('')
 
     const { data, error: queryError } = await supabase
@@ -487,7 +514,7 @@ function AdminPage({ user }: { user: SessionUser }) {
       setMovies((data || []) as MovieRow[])
     }
 
-    setLoadingMovies(false)
+    setLoading(false)
   }
 
   useEffect(() => {
@@ -495,7 +522,7 @@ function AdminPage({ user }: { user: SessionUser }) {
   }, [])
 
   return (
-    <div className="app-content">
+    <main className="app-content">
       <div className="page-heading">
         <div>
           <span className="section-kicker">ADMIN CONTROL</span>
@@ -509,10 +536,9 @@ function AdminPage({ user }: { user: SessionUser }) {
 
       <section className="panel notification-list">
         <h2>Uploaded movies ({movies.length})</h2>
-
-        {loadingMovies && <p>Loading movies…</p>}
+        {loading && <p>Loading movies…</p>}
         {error && <div className="form-error" role="alert">{error}</div>}
-        {!loadingMovies && !error && movies.length === 0 && <p>No movies uploaded yet.</p>}
+        {!loading && !error && movies.length === 0 && <p>No movies uploaded yet.</p>}
 
         {movies.map(movie => (
           <div className="notification-item" key={movie.id}>
@@ -535,7 +561,7 @@ function AdminPage({ user }: { user: SessionUser }) {
           }}
         />
       )}
-    </div>
+    </main>
   )
 }
 
@@ -569,7 +595,9 @@ function LibraryPage() {
     }
 
     void loadMovies()
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   async function downloadMovie(movie: MovieRow) {
@@ -588,7 +616,7 @@ function LibraryPage() {
   }
 
   return (
-    <div className="app-content">
+    <main className="app-content">
       <div className="page-heading">
         <div>
           <span className="section-kicker">MOVIE LIBRARY</span>
@@ -625,7 +653,7 @@ function LibraryPage() {
           )
         })}
       </div>
-    </div>
+    </main>
   )
 }
 
@@ -637,12 +665,17 @@ function AppShell({
   setUser: (user: SessionUser | null) => void
 }) {
   const navigate = useNavigate()
+  const [error, setError] = useState('')
 
   async function signOut() {
     if (supabase) {
-      const { error } = await supabase.auth.signOut()
-      if (error) return
+      const { error: signOutError } = await supabase.auth.signOut()
+      if (signOutError) {
+        setError(signOutError.message)
+        return
+      }
     }
+
     setUser(null)
     navigate('/login')
   }
@@ -677,6 +710,8 @@ function AppShell({
           <Bell size={20} />
         </header>
 
+        {error && <div className="form-error" role="alert">{error}</div>}
+
         <Routes>
           <Route
             path="/dashboard"
@@ -684,9 +719,14 @@ function AppShell({
               <main className="app-content">
                 <span className="section-kicker">CINEMAX COMMUNITY</span>
                 <h1>Welcome, {user.name}</h1>
-                <Link to="/library" className="primary-btn">Browse Movies <ChevronRight size={18} /></Link>
+                <p>Discover and download movies from the community library.</p>
+                <Link to="/library" className="primary-btn">
+                  Browse Movies <ChevronRight size={18} />
+                </Link>
                 {user.role === 'admin' && (
-                  <Link to="/admin" className="secondary-btn">Open Admin Panel</Link>
+                  <Link to="/admin" className="secondary-btn">
+                    Open Admin Panel
+                  </Link>
                 )}
               </main>
             }
@@ -735,10 +775,14 @@ function AppRoutes() {
       }
     })
 
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [])
 
-  if (loading) return <main className="app-content"><p>Loading your account…</p></main>
+  if (loading) {
+    return <main className="app-content"><p>Loading your account…</p></main>
+  }
 
   return (
     <Routes>
@@ -756,7 +800,9 @@ function AppRoutes() {
       />
       <Route
         path="/*"
-        element={user ? <AppShell user={user} setUser={setUser} /> : <Navigate to="/login" replace />}
+        element={user
+          ? <AppShell user={user} setUser={setUser} />
+          : <Navigate to="/login" replace />}
       />
     </Routes>
   )
